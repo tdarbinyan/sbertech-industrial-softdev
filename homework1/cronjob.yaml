@@ -1,0 +1,42 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: log-archiver
+spec:
+  schedule: "*/10 * * * *"
+  successfulJobsHistoryLimit: 10
+  failedJobsHistoryLimit: 10
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: archiver
+            image: curlimages/curl
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting archive job"
+              curl -v http://app-service:5000/logs > /tmp/app-logs.json
+              if [ ! -s /tmp/app-logs.json ]; then
+                echo "Error: Log file is empty"
+                exit 1
+              fi
+              echo "Creating archive..."
+              tar -czf /tmp/app-logs.tar.gz /tmp/app-logs.json
+              if [ ! -f /tmp/app-logs.tar.gz ]; then
+                echo "Error: Archive file was not created"
+                exit 1
+              fi
+              echo "Archive created successfully"
+              echo "Contents of /tmp:"
+              ls -lh /tmp
+            volumeMounts:
+            - name: archive-volume
+              mountPath: /tmp
+          volumes:
+          - name: archive-volume
+            emptyDir: {}
+          restartPolicy: OnFailure 
