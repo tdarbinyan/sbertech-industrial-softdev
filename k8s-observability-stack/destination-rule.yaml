@@ -1,0 +1,10 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: app-destination-rule
+spec:
+  host: app-service.default.svc.cluster.local
+  subsets:
+  - name: v1
+    labels:
+      app: logging-app 

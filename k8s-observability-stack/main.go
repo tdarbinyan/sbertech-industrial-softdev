@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -14,8 +16,35 @@ const (
 	logFile = "app.log"
 )
 
+var (
+	logRequestsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "log_requests_total",
+		Help: "Total number of log requests",
+	})
+	logRequestsSuccess = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "log_requests_success_total",
+		Help: "Total number of successful log requests",
+	})
+	logRequestsFailed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "log_requests_failed_total",
+		Help: "Total number of failed log requests",
+	})
+	logRequestDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "log_request_duration_seconds",
+		Help:    "Duration of log requests in seconds",
+		Buckets: prometheus.DefBuckets,
+	})
+)
+
 type LogMessage struct {
 	Message string `json:"message"`
+}
+
+func init() {
+	prometheus.MustRegister(logRequestsTotal)
+	prometheus.MustRegister(logRequestsSuccess)
+	prometheus.MustRegister(logRequestsFailed)
+	prometheus.MustRegister(logRequestDuration)
 }
 
 func ensureLogDir() error {
@@ -61,10 +90,19 @@ func main() {
 		welcomeMessage = "Welcome to the custom app"
 	}
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "5000" 
+	httpPort := os.Getenv("HTTP_PORT")
+	if httpPort == "" {
+		httpPort = "5000"
 	}
+
+	metricsPort := os.Getenv("METRICS_PORT")
+	if metricsPort == "" {
+		metricsPort = "5001"
+	}
+
+	metricsRouter := gin.Default()
+	metricsRouter.GET("/metrics", gin.WrapH(promhttp.Handler()))
+	go metricsRouter.Run(":" + metricsPort)
 
 	r.GET("/", func(c *gin.Context) {
 		c.String(http.StatusOK, welcomeMessage)
@@ -75,17 +113,24 @@ func main() {
 	})
 
 	r.POST("/log", func(c *gin.Context) {
+		start := time.Now()
+		logRequestsTotal.Inc()
+
 		var logMsg LogMessage
 		if err := c.ShouldBindJSON(&logMsg); err != nil {
+			logRequestsFailed.Inc()
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 			return
 		}
 
 		if err := writeLog(logMsg.Message); err != nil {
+			logRequestsFailed.Inc()
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write log"})
 			return
 		}
 
+		logRequestsSuccess.Inc()
+		logRequestDuration.Observe(time.Since(start).Seconds())
 		c.JSON(http.StatusOK, gin.H{"status": "logged"})
 	})
 
@@ -99,5 +144,5 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"logs": logs})
 	})
 
-	r.Run(":" + port)
+	r.Run(":" + httpPort)
 }
